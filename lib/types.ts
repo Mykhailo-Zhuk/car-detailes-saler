@@ -13,12 +13,14 @@ export interface Part {
   code: string;
   name: string;
   description: string;
-  category_id: string;
+  category_id: string | null;
+  car_id: string | null;
   price: number;
   stock: number;
-  delivery_days: number;
+  delivery_days: number | null;
   image_url: string;
   created_at: string;
+  categories?: { name: string } | null;
 }
 
 export interface Category {
@@ -38,7 +40,7 @@ export interface Analog {
 
 export interface Schema {
   id: string;
-  part_id: string;
+  part_id: string | null;
   title: string;
   image_url: string;
   created_at: string;
@@ -78,4 +80,14 @@ export interface ChatContent {
 export interface CartItem {
   part: Part;
   quantity: number;
+}
+
+export interface ConversationContext {
+  carId?: string;
+  carLabel?: string;
+  brand?: string;
+  model?: string;
+  categoryId?: string;
+  categoryLabel?: string;
+  lastPartIds?: string[];
 }
