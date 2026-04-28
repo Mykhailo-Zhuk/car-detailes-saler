@@ -84,13 +84,37 @@ export default function ChatInterface() {
       return;
     }
 
+    // Comparison — detect "порівняти/порівняй" with parts in context
+    if (lower.includes("порівня") || lower.includes("порівнян")) {
+      if (context.lastPartIds?.length && context.lastPartIds.length >= 2) {
+        setThinking("Формую таблицю порівняння...");
+        const { data: parts } = await supabase
+          .from("parts").select("*,categories(name),cars(brand,model,year)")
+          .in("id", context.lastPartIds.slice(0, 4));
+        if ((parts?.length ?? 0) >= 2) {
+          addMsg({
+            id: `cmp-${Date.now()}`, role: "assistant",
+            content: { type: "comparison", data: { parts } },
+            timestamp: new Date(),
+          });
+          return;
+        }
+      }
+      addMsg({
+        id: `cmp-nf-${Date.now()}`, role: "assistant",
+        content: "Для порівняння спочатку знайдіть декілька запчастин (наприклад, за кодом або маркою авто).",
+        timestamp: new Date(),
+      });
+      return;
+    }
+
     // Part code — explicit keyword or long alphanumeric token
     const codeMatch = text.match(/\b([A-Z0-9]{5,20})\b/i);
     if (codeMatch && (lower.includes("код") || lower.includes("детал") || lower.includes("артикул") || codeMatch[0].length >= 7)) {
       const code = codeMatch[1].toUpperCase();
       setThinking("Шукаю запчастину за кодом...");
       const { data: parts } = await supabase
-        .from("parts").select("*,categories(name)").ilike("code", `%${code}%`).limit(10);
+        .from("parts").select("*,categories(name),cars(brand,model,year)").ilike("code", `%${code}%`).limit(10);
       if (parts?.length) {
         setThinking("Шукаю аналоги та схеми...");
         const analogs = parts.length === 1 ? await fetchAnalogs(parts[0].id) : [];
@@ -271,7 +295,7 @@ export default function ChatInterface() {
               style={{ background: msg.role === "user" ? "var(--primary)" : "var(--bg-card)", color: msg.role === "user" ? "#fff" : "var(--text)" }}
             >
               {typeof msg.content === "string"
-                ? <div className="text-sm whitespace-pre-wrap leading-relaxed">{msg.content}</div>
+                ? <div className="text-sm whitespace-pre-wrap leading-relaxed">{renderMarkdown(msg.content)}</div>
                 : renderContent(msg.content, addToCart, setSchemaView)}
             </div>
           </div>
@@ -424,6 +448,14 @@ export default function ChatInterface() {
   );
 }
 
+function renderMarkdown(text: string) {
+  return text.split(/(\*\*[^*]+\*\*)/g).map((part, i) =>
+    part.startsWith("**") && part.endsWith("**")
+      ? <strong key={i}>{part.slice(2, -2)}</strong>
+      : <span key={i}>{part}</span>
+  );
+}
+
 function renderContent(
   content: ChatContent,
   addToCart: (p: Part) => void,
@@ -444,6 +476,7 @@ function renderContent(
                 <p className="font-medium">{p.name}</p>
                 {p.code && <p className="text-xs mt-0.5" style={{ color: "var(--text-muted)" }}>Код: {p.code}</p>}
                 {p.categories?.name && <p className="text-xs" style={{ color: "var(--text-muted)" }}>Категорія: {p.categories.name}</p>}
+                {p.cars?.brand && <p className="text-xs" style={{ color: "var(--text-muted)" }}>Авто: {p.cars.brand} {p.cars.model} {p.cars.year ? `(${p.cars.year})` : ""}</p>}
                 <div className="flex flex-wrap gap-x-3 gap-y-0.5 mt-1">
                   <span className="text-xs" style={{ color: p.stock > 0 ? "var(--success)" : "var(--error)" }}>
                     {p.stock > 0 ? `✓ В наявності (${p.stock} шт)` : "✗ Немає в наявності"}
