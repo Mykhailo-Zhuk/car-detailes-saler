@@ -72,5 +72,4 @@ auth/               # Supabase Auth (готовий, налаштований)
 ## 🔗 Посилання
 
 - **GitHub:** https://github.com/Mykhailo-Zhuk/car-detailes-saler
-- **Supabase:** https://supabase.com/dashboard/project/wznofwrctkemcmwyndmg
 - **Linear:** OPE-71

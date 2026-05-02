@@ -2,7 +2,7 @@
 import { useEffect, useState } from "react";
 import { supabase } from "@/lib/supabaseClient";
 import { Part, Category, Order, Schema } from "@/lib/types";
-import { LogIn, Plus, X, Pencil, Trash2, ImageIcon, Download } from "lucide-react";
+import { LogIn, Plus, X, Pencil, Trash2, ImageIcon, Download, LogOut } from "lucide-react";
 
 type Tab = "parts" | "categories" | "analogs" | "schemas" | "orders";
 
@@ -10,6 +10,14 @@ const INPUT = "w-full px-3 py-2.5 rounded-lg text-sm outline-none";
 const INPUT_STYLE = { background: "var(--bg)", color: "var(--text)", border: "1px solid var(--border)" };
 const BTN_PRIMARY = { background: "var(--primary)", color: "#fff" };
 const BTN_GHOST = { background: "var(--bg)", border: "1px solid var(--border)", color: "var(--text-muted)" };
+
+function safeUrl(url: string | null | undefined): string {
+  if (!url) return "";
+  try {
+    const { protocol } = new URL(url);
+    return protocol === "https:" || protocol === "http:" ? url : "";
+  } catch { return ""; }
+}
 
 export default function AdminPage() {
   const [isAuth, setIsAuth] = useState(false);
@@ -45,7 +53,19 @@ export default function AdminPage() {
     supabase.auth.getSession().then(({ data: { session } }) => {
       if (session) { setIsAuth(true); loadData(); }
     });
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((event, session) => {
+      if (event === "SIGNED_OUT" || !session) setIsAuth(false);
+    });
+    return () => subscription.unsubscribe();
   }, []);
+
+  async function handleLogout() {
+    await supabase.auth.signOut();
+    setIsAuth(false);
+    setEmail("");
+    setPassword("");
+    setAuthError("");
+  }
 
   async function loadData() {
     const [p, c, o, an, sc, ca] = await Promise.all([
@@ -66,59 +86,86 @@ export default function AdminPage() {
 
   async function savePart(e: React.FormEvent) {
     e.preventDefault();
+    if (!np.code.trim() || np.code.length > 50) { setAuthError("Код: від 1 до 50 символів"); return; }
+    if (!np.name.trim() || np.name.length > 200) { setAuthError("Назва: від 1 до 200 символів"); return; }
+    if (np.price < 0) { setAuthError("Ціна не може бути від'ємною"); return; }
+    if (np.stock < 0) { setAuthError("Кількість не може бути від'ємною"); return; }
+    const imageUrl = np.image_url ? safeUrl(np.image_url) : null;
+    if (np.image_url && !imageUrl) { setAuthError("Некоректний URL зображення (потрібен http/https)"); return; }
+    setAuthError("");
     const payload = {
-      code: np.code, name: np.name, description: np.description,
+      code: np.code.trim(), name: np.name.trim(), description: np.description,
       category_id: np.category_id || null, car_id: np.car_id || null,
       price: np.price, stock: np.stock,
-      delivery_days: np.delivery_days || null, image_url: np.image_url || null,
+      delivery_days: np.delivery_days || null, image_url: imageUrl,
     };
-    if (partModal?.id) await supabase.from("parts").update(payload).eq("id", partModal.id);
-    else await supabase.from("parts").insert(payload);
+    const { error } = partModal?.id
+      ? await supabase.from("parts").update(payload).eq("id", partModal.id)
+      : await supabase.from("parts").insert(payload);
+    if (error) { setAuthError("Помилка збереження: " + error.message); return; }
     setPartModal(null); setNp(emptyPart); loadData();
   }
 
   async function deletePart(id: string) {
     if (!confirm("Видалити запчастину?")) return;
-    await supabase.from("parts").delete().eq("id", id); loadData();
+    const { error } = await supabase.from("parts").delete().eq("id", id);
+    if (!error) loadData();
   }
 
   async function saveCat(e: React.FormEvent) {
     e.preventDefault();
-    const payload = { name: nc.name, description: nc.description, parent_id: nc.parent_id || null };
-    if (catModal?.id) await supabase.from("categories").update(payload).eq("id", catModal.id);
-    else await supabase.from("categories").insert(payload);
+    if (!nc.name.trim() || nc.name.length > 100) { setAuthError("Назва: від 1 до 100 символів"); return; }
+    setAuthError("");
+    const payload = { name: nc.name.trim(), description: nc.description, parent_id: nc.parent_id || null };
+    const { error } = catModal?.id
+      ? await supabase.from("categories").update(payload).eq("id", catModal.id)
+      : await supabase.from("categories").insert(payload);
+    if (error) { setAuthError("Помилка збереження: " + error.message); return; }
     setCatModal(null); setNc(emptyCat); loadData();
   }
 
   async function deleteCat(id: string) {
     if (!confirm("Видалити категорію?")) return;
-    await supabase.from("categories").delete().eq("id", id); loadData();
+    const { error } = await supabase.from("categories").delete().eq("id", id);
+    if (!error) loadData();
   }
 
   async function saveAnalog(e: React.FormEvent) {
     e.preventDefault();
-    await supabase.from("analogs").insert({ part_id: na.part_id, analog_part_id: na.analog_part_id, type: na.type, note: na.note });
+    if (!na.part_id || !na.analog_part_id) { setAuthError("Оберіть обидві деталі"); return; }
+    if (na.part_id === na.analog_part_id) { setAuthError("Деталь не може бути аналогом самої себе"); return; }
+    setAuthError("");
+    const { error } = await supabase.from("analogs").insert({ part_id: na.part_id, analog_part_id: na.analog_part_id, type: na.type, note: na.note });
+    if (error) { setAuthError("Помилка збереження: " + error.message); return; }
     setAnalogModal(false); setNa(emptyAnalog); loadData();
   }
 
   async function deleteAnalog(id: string) {
     if (!confirm("Видалити аналог?")) return;
-    await supabase.from("analogs").delete().eq("id", id); loadData();
+    const { error } = await supabase.from("analogs").delete().eq("id", id);
+    if (!error) loadData();
   }
 
   async function saveSchema(e: React.FormEvent) {
     e.preventDefault();
-    await supabase.from("schemas").insert({ part_id: ns.part_id || null, title: ns.title, image_url: ns.image_url });
+    if (!ns.title.trim() || ns.title.length > 200) { setAuthError("Назва: від 1 до 200 символів"); return; }
+    const imageUrl = safeUrl(ns.image_url);
+    if (!imageUrl) { setAuthError("Некоректний URL зображення (потрібен http/https)"); return; }
+    setAuthError("");
+    const { error } = await supabase.from("schemas").insert({ part_id: ns.part_id || null, title: ns.title.trim(), image_url: imageUrl });
+    if (error) { setAuthError("Помилка збереження: " + error.message); return; }
     setSchemaModal(false); setNs(emptySchema); loadData();
   }
 
   async function deleteSchema(id: string) {
     if (!confirm("Видалити схему?")) return;
-    await supabase.from("schemas").delete().eq("id", id); loadData();
+    const { error } = await supabase.from("schemas").delete().eq("id", id);
+    if (!error) loadData();
   }
 
   async function updateOrder(id: string, status: string) {
-    await supabase.from("orders").update({ status }).eq("id", id); loadData();
+    const { error } = await supabase.from("orders").update({ status }).eq("id", id);
+    if (!error) loadData();
   }
 
   function openEditPart(p: Part) {
@@ -158,11 +205,15 @@ export default function AdminPage() {
       <header className="sticky top-0 z-50 px-4 py-3" style={{ background: "var(--bg-card)", borderBottom: "1px solid var(--border)" }}>
         <div className="flex items-center justify-between">
           <h1 className="font-semibold">Адмін-панель</h1>
-          <a href="/" className="text-xs px-3 py-1.5 rounded-lg" style={BTN_GHOST}>← Чат</a>
+          <div className="flex gap-2">
+            <a href="/" className="text-xs px-3 py-1.5 rounded-lg" style={BTN_GHOST}>← Чат</a>
+            <button onClick={handleLogout} className="text-xs px-3 py-1.5 rounded-lg flex items-center gap-1" style={BTN_GHOST}><LogOut className="w-3 h-3" /> Вийти</button>
+          </div>
         </div>
+        {authError && <p className="text-xs mt-2 px-1" style={{ color: "var(--error)" }}>{authError}</p>}
         <div className="flex gap-2 mt-2 overflow-x-auto pb-0.5">
           {TABS.map(t => (
-            <button key={t.key} onClick={() => setTab(t.key)} className="px-3 py-1.5 rounded-lg text-xs font-medium whitespace-nowrap flex items-center gap-1.5"
+            <button key={t.key} onClick={() => { setTab(t.key); setAuthError(""); }} className="px-3 py-1.5 rounded-lg text-xs font-medium whitespace-nowrap flex items-center gap-1.5"
               style={{ background: tab === t.key ? "var(--primary)" : "var(--bg)", color: tab === t.key ? "#fff" : "var(--text)" }}>
               {t.label}
               <span className="opacity-60 text-[10px]">({t.count})</span>
@@ -178,7 +229,7 @@ export default function AdminPage() {
           <div className="space-y-3">
             <div className="flex items-center justify-between">
               <h2 className="text-sm font-medium" style={{ color: "var(--text-secondary)" }}>Запчастини ({parts.length})</h2>
-              <button onClick={() => { setNp(emptyPart); setPartModal({}); }} className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs" style={BTN_PRIMARY}><Plus className="w-3 h-3" /> Додати</button>
+              <button onClick={() => { setNp(emptyPart); setPartModal({}); setAuthError(""); }} className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs" style={BTN_PRIMARY}><Plus className="w-3 h-3" /> Додати</button>
             </div>
             {parts.map(p => (
               <div key={p.id} className="p-3 rounded-xl text-sm flex items-start justify-between gap-2" style={{ background: "var(--bg-card)", border: "1px solid var(--border)" }}>
@@ -191,7 +242,7 @@ export default function AdminPage() {
                   {(p as any).categories?.name && <p className="text-xs" style={{ color: "var(--text-muted)" }}>{(p as any).categories.name}</p>}
                 </div>
                 <div className="flex gap-1 shrink-0">
-                  <button onClick={() => openEditPart(p)} className="p-1.5 rounded" style={{ background: "var(--bg)" }}><Pencil className="w-3.5 h-3.5" /></button>
+                  <button onClick={() => { openEditPart(p); setAuthError(""); }} className="p-1.5 rounded" style={{ background: "var(--bg)" }}><Pencil className="w-3.5 h-3.5" /></button>
                   <button onClick={() => deletePart(p.id)} className="p-1.5 rounded" style={{ background: "var(--bg)", color: "var(--error)" }}><Trash2 className="w-3.5 h-3.5" /></button>
                 </div>
               </div>
@@ -204,7 +255,7 @@ export default function AdminPage() {
           <div className="space-y-3">
             <div className="flex items-center justify-between">
               <h2 className="text-sm font-medium" style={{ color: "var(--text-secondary)" }}>Категорії ({categories.length})</h2>
-              <button onClick={() => { setNc(emptyCat); setCatModal({}); }} className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs" style={BTN_PRIMARY}><Plus className="w-3 h-3" /> Додати</button>
+              <button onClick={() => { setNc(emptyCat); setCatModal({}); setAuthError(""); }} className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs" style={BTN_PRIMARY}><Plus className="w-3 h-3" /> Додати</button>
             </div>
             {categories.map(c => (
               <div key={c.id} className="p-3 rounded-xl text-sm flex items-center justify-between" style={{ background: "var(--bg-card)", border: "1px solid var(--border)" }}>
@@ -214,7 +265,7 @@ export default function AdminPage() {
                   {c.parent_id && <p className="text-xs" style={{ color: "var(--text-muted)" }}>↳ {categories.find(x => x.id === c.parent_id)?.name || "підкатегорія"}</p>}
                 </div>
                 <div className="flex gap-1 shrink-0">
-                  <button onClick={() => openEditCat(c)} className="p-1.5 rounded" style={{ background: "var(--bg)" }}><Pencil className="w-3.5 h-3.5" /></button>
+                  <button onClick={() => { openEditCat(c); setAuthError(""); }} className="p-1.5 rounded" style={{ background: "var(--bg)" }}><Pencil className="w-3.5 h-3.5" /></button>
                   <button onClick={() => deleteCat(c.id)} className="p-1.5 rounded" style={{ background: "var(--bg)", color: "var(--error)" }}><Trash2 className="w-3.5 h-3.5" /></button>
                 </div>
               </div>
@@ -227,7 +278,7 @@ export default function AdminPage() {
           <div className="space-y-3">
             <div className="flex items-center justify-between">
               <h2 className="text-sm font-medium" style={{ color: "var(--text-secondary)" }}>Аналоги ({analogs.length})</h2>
-              <button onClick={() => setAnalogModal(true)} className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs" style={BTN_PRIMARY}><Plus className="w-3 h-3" /> Додати</button>
+              <button onClick={() => { setAnalogModal(true); setAuthError(""); }} className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs" style={BTN_PRIMARY}><Plus className="w-3 h-3" /> Додати</button>
             </div>
             {analogs.length === 0 && <p className="text-sm" style={{ color: "var(--text-muted)" }}>Аналогів ще немає</p>}
             {analogs.map((a: any) => (
@@ -256,28 +307,31 @@ export default function AdminPage() {
           <div className="space-y-3">
             <div className="flex items-center justify-between">
               <h2 className="text-sm font-medium" style={{ color: "var(--text-secondary)" }}>Схеми ({schemas.length})</h2>
-              <button onClick={() => setSchemaModal(true)} className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs" style={BTN_PRIMARY}><Plus className="w-3 h-3" /> Додати</button>
+              <button onClick={() => { setSchemaModal(true); setAuthError(""); }} className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs" style={BTN_PRIMARY}><Plus className="w-3 h-3" /> Додати</button>
             </div>
             {schemas.length === 0 && <p className="text-sm" style={{ color: "var(--text-muted)" }}>Схем ще немає</p>}
             <div className="grid grid-cols-2 gap-3">
-              {schemas.map((s: any) => (
-                <div key={s.id} className="rounded-xl overflow-hidden" style={{ background: "var(--bg-card)", border: "1px solid var(--border)" }}>
-                  <div className="relative bg-white" style={{ paddingTop: "56%" }}>
-                    <img src={s.image_url} alt={s.title} className="absolute inset-0 w-full h-full object-contain p-2" />
-                  </div>
-                  <div className="p-2 flex items-center justify-between gap-2">
-                    <div className="min-w-0">
-                      <p className="text-xs font-medium truncate">{s.title}</p>
-                      {s.parts?.name && <p className="text-xs truncate" style={{ color: "var(--text-muted)" }}>{s.parts.name}</p>}
+              {schemas.map((s: any) => {
+                const imgSrc = safeUrl(s.image_url);
+                return (
+                  <div key={s.id} className="rounded-xl overflow-hidden" style={{ background: "var(--bg-card)", border: "1px solid var(--border)" }}>
+                    <div className="relative bg-white" style={{ paddingTop: "56%" }}>
+                      {imgSrc && <img src={imgSrc} alt={s.title} className="absolute inset-0 w-full h-full object-contain p-2" />}
                     </div>
-                    <div className="flex gap-1 shrink-0">
-                      <button onClick={() => setViewSchema(s)} className="p-1.5 rounded" style={{ background: "var(--bg)" }}><ImageIcon className="w-3 h-3" /></button>
-                      <a href={s.image_url} download target="_blank" rel="noopener noreferrer" className="p-1.5 rounded" style={{ background: "var(--bg)" }}><Download className="w-3 h-3" /></a>
-                      <button onClick={() => deleteSchema(s.id)} className="p-1.5 rounded" style={{ background: "var(--bg)", color: "var(--error)" }}><Trash2 className="w-3 h-3" /></button>
+                    <div className="p-2 flex items-center justify-between gap-2">
+                      <div className="min-w-0">
+                        <p className="text-xs font-medium truncate">{s.title}</p>
+                        {s.parts?.name && <p className="text-xs truncate" style={{ color: "var(--text-muted)" }}>{s.parts.name}</p>}
+                      </div>
+                      <div className="flex gap-1 shrink-0">
+                        <button onClick={() => setViewSchema(s)} className="p-1.5 rounded" style={{ background: "var(--bg)" }}><ImageIcon className="w-3 h-3" /></button>
+                        {imgSrc && <a href={imgSrc} download target="_blank" rel="noopener noreferrer" className="p-1.5 rounded" style={{ background: "var(--bg)" }}><Download className="w-3 h-3" /></a>}
+                        <button onClick={() => deleteSchema(s.id)} className="p-1.5 rounded" style={{ background: "var(--bg)", color: "var(--error)" }}><Trash2 className="w-3.5 h-3.5" /></button>
+                      </div>
                     </div>
                   </div>
-                </div>
-              ))}
+                );
+              })}
             </div>
           </div>
         )}
@@ -328,12 +382,12 @@ export default function AdminPage() {
           <div className="w-full max-w-md p-6 rounded-t-2xl sm:rounded-2xl max-h-[90vh] overflow-y-auto" style={{ background: "var(--bg-card)" }}>
             <div className="flex items-center justify-between mb-4">
               <h2 className="font-semibold">{partModal.id ? "Редагувати запчастину" : "Нова запчастина"}</h2>
-              <button onClick={() => setPartModal(null)}><X className="w-5 h-5" /></button>
+              <button onClick={() => { setPartModal(null); setAuthError(""); }}><X className="w-5 h-5" /></button>
             </div>
             <form onSubmit={savePart} className="space-y-3">
-              <input value={np.code} onChange={e => setNp({ ...np, code: e.target.value })} className={INPUT} style={INPUT_STYLE} placeholder="Код" required />
-              <input value={np.name} onChange={e => setNp({ ...np, name: e.target.value })} className={INPUT} style={INPUT_STYLE} placeholder="Назва" required />
-              <textarea value={np.description} onChange={e => setNp({ ...np, description: e.target.value })} className={INPUT + " resize-none"} style={INPUT_STYLE} placeholder="Опис" rows={2} />
+              <input value={np.code} onChange={e => setNp({ ...np, code: e.target.value })} className={INPUT} style={INPUT_STYLE} placeholder="Код" required maxLength={50} />
+              <input value={np.name} onChange={e => setNp({ ...np, name: e.target.value })} className={INPUT} style={INPUT_STYLE} placeholder="Назва" required maxLength={200} />
+              <textarea value={np.description} onChange={e => setNp({ ...np, description: e.target.value })} className={INPUT + " resize-none"} style={INPUT_STYLE} placeholder="Опис" rows={2} maxLength={1000} />
               <select value={np.category_id} onChange={e => setNp({ ...np, category_id: e.target.value })} className={INPUT} style={INPUT_STYLE}>
                 <option value="">— Категорія —</option>
                 {categories.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
@@ -345,18 +399,18 @@ export default function AdminPage() {
               <div className="grid grid-cols-3 gap-2">
                 <div>
                   <label className="text-xs block mb-1" style={{ color: "var(--text-muted)" }}>Ціна (₴)</label>
-                  <input type="number" value={np.price} onChange={e => setNp({ ...np, price: parseInt(e.target.value) || 0 })} className={INPUT} style={INPUT_STYLE} />
+                  <input type="number" min={0} max={9999999} value={np.price} onChange={e => setNp({ ...np, price: Math.max(0, parseInt(e.target.value) || 0) })} className={INPUT} style={INPUT_STYLE} />
                 </div>
                 <div>
                   <label className="text-xs block mb-1" style={{ color: "var(--text-muted)" }}>Наявність</label>
-                  <input type="number" value={np.stock} onChange={e => setNp({ ...np, stock: parseInt(e.target.value) || 0 })} className={INPUT} style={INPUT_STYLE} />
+                  <input type="number" min={0} value={np.stock} onChange={e => setNp({ ...np, stock: Math.max(0, parseInt(e.target.value) || 0) })} className={INPUT} style={INPUT_STYLE} />
                 </div>
                 <div>
                   <label className="text-xs block mb-1" style={{ color: "var(--text-muted)" }}>Доставка (дн.)</label>
-                  <input type="number" value={np.delivery_days} onChange={e => setNp({ ...np, delivery_days: parseInt(e.target.value) || 0 })} className={INPUT} style={INPUT_STYLE} />
+                  <input type="number" min={0} value={np.delivery_days} onChange={e => setNp({ ...np, delivery_days: Math.max(0, parseInt(e.target.value) || 0) })} className={INPUT} style={INPUT_STYLE} />
                 </div>
               </div>
-              <input value={np.image_url} onChange={e => setNp({ ...np, image_url: e.target.value })} className={INPUT} style={INPUT_STYLE} placeholder="URL зображення (опц.)" />
+              <input value={np.image_url} onChange={e => setNp({ ...np, image_url: e.target.value })} className={INPUT} style={INPUT_STYLE} placeholder="URL зображення (https://...)" />
               <button type="submit" className="w-full py-2.5 rounded-lg text-sm font-medium" style={BTN_PRIMARY}>{partModal.id ? "Зберегти" : "Створити"}</button>
             </form>
           </div>
@@ -369,11 +423,11 @@ export default function AdminPage() {
           <div className="w-full max-w-md p-6 rounded-t-2xl sm:rounded-2xl" style={{ background: "var(--bg-card)" }}>
             <div className="flex items-center justify-between mb-4">
               <h2 className="font-semibold">{catModal.id ? "Редагувати категорію" : "Нова категорія"}</h2>
-              <button onClick={() => setCatModal(null)}><X className="w-5 h-5" /></button>
+              <button onClick={() => { setCatModal(null); setAuthError(""); }}><X className="w-5 h-5" /></button>
             </div>
             <form onSubmit={saveCat} className="space-y-3">
-              <input value={nc.name} onChange={e => setNc({ ...nc, name: e.target.value })} className={INPUT} style={INPUT_STYLE} placeholder="Назва" required />
-              <textarea value={nc.description} onChange={e => setNc({ ...nc, description: e.target.value })} className={INPUT + " resize-none"} style={INPUT_STYLE} placeholder="Опис" rows={2} />
+              <input value={nc.name} onChange={e => setNc({ ...nc, name: e.target.value })} className={INPUT} style={INPUT_STYLE} placeholder="Назва" required maxLength={100} />
+              <textarea value={nc.description} onChange={e => setNc({ ...nc, description: e.target.value })} className={INPUT + " resize-none"} style={INPUT_STYLE} placeholder="Опис" rows={2} maxLength={500} />
               <select value={nc.parent_id} onChange={e => setNc({ ...nc, parent_id: e.target.value })} className={INPUT} style={INPUT_STYLE}>
                 <option value="">— Батьківська категорія (опц.) —</option>
                 {categories.filter(c => c.id !== catModal.id).map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
@@ -390,7 +444,7 @@ export default function AdminPage() {
           <div className="w-full max-w-md p-6 rounded-t-2xl sm:rounded-2xl" style={{ background: "var(--bg-card)" }}>
             <div className="flex items-center justify-between mb-4">
               <h2 className="font-semibold">Новий аналог</h2>
-              <button onClick={() => setAnalogModal(false)}><X className="w-5 h-5" /></button>
+              <button onClick={() => { setAnalogModal(false); setAuthError(""); }}><X className="w-5 h-5" /></button>
             </div>
             <form onSubmit={saveAnalog} className="space-y-3">
               <div>
@@ -412,7 +466,7 @@ export default function AdminPage() {
                 <option value="compatible">Сумісний</option>
                 <option value="oem">OEM</option>
               </select>
-              <input value={na.note} onChange={e => setNa({ ...na, note: e.target.value })} className={INPUT} style={INPUT_STYLE} placeholder="Примітка (опц.)" />
+              <input value={na.note} onChange={e => setNa({ ...na, note: e.target.value })} className={INPUT} style={INPUT_STYLE} placeholder="Примітка (опц.)" maxLength={200} />
               <button type="submit" className="w-full py-2.5 rounded-lg text-sm font-medium" style={BTN_PRIMARY}>Створити</button>
             </form>
           </div>
@@ -425,18 +479,18 @@ export default function AdminPage() {
           <div className="w-full max-w-md p-6 rounded-t-2xl sm:rounded-2xl" style={{ background: "var(--bg-card)" }}>
             <div className="flex items-center justify-between mb-4">
               <h2 className="font-semibold">Нова схема</h2>
-              <button onClick={() => setSchemaModal(false)}><X className="w-5 h-5" /></button>
+              <button onClick={() => { setSchemaModal(false); setAuthError(""); }}><X className="w-5 h-5" /></button>
             </div>
             <form onSubmit={saveSchema} className="space-y-3">
-              <input value={ns.title} onChange={e => setNs({ ...ns, title: e.target.value })} className={INPUT} style={INPUT_STYLE} placeholder="Назва схеми" required />
-              <input value={ns.image_url} onChange={e => setNs({ ...ns, image_url: e.target.value })} className={INPUT} style={INPUT_STYLE} placeholder="URL зображення (.png)" required />
+              <input value={ns.title} onChange={e => setNs({ ...ns, title: e.target.value })} className={INPUT} style={INPUT_STYLE} placeholder="Назва схеми" required maxLength={200} />
+              <input value={ns.image_url} onChange={e => setNs({ ...ns, image_url: e.target.value })} className={INPUT} style={INPUT_STYLE} placeholder="URL зображення (https://...)" required />
               <select value={ns.part_id} onChange={e => setNs({ ...ns, part_id: e.target.value })} className={INPUT} style={INPUT_STYLE}>
                 <option value="">— Прив'язати до деталі (опц.) —</option>
                 {parts.map(p => <option key={p.id} value={p.id}>{p.name} ({p.code})</option>)}
               </select>
-              {ns.image_url && (
+              {safeUrl(ns.image_url) && (
                 <div className="rounded-lg overflow-hidden bg-white">
-                  <img src={ns.image_url} alt="Preview" className="w-full h-32 object-contain p-2" />
+                  <img src={safeUrl(ns.image_url)} alt="Preview" className="w-full h-32 object-contain p-2" />
                 </div>
               )}
               <button type="submit" className="w-full py-2.5 rounded-lg text-sm font-medium" style={BTN_PRIMARY}>Додати схему</button>
@@ -452,11 +506,11 @@ export default function AdminPage() {
             <div className="flex items-center justify-between mb-3">
               <h3 className="font-semibold text-white">{viewSchema.title}</h3>
               <div className="flex gap-2">
-                <a href={viewSchema.image_url} download target="_blank" rel="noopener noreferrer" className="p-2 rounded-lg" style={{ background: "var(--bg-card)" }}><Download className="w-4 h-4" /></a>
+                {safeUrl(viewSchema.image_url) && <a href={safeUrl(viewSchema.image_url)} download target="_blank" rel="noopener noreferrer" className="p-2 rounded-lg" style={{ background: "var(--bg-card)" }}><Download className="w-4 h-4" /></a>}
                 <button onClick={() => setViewSchema(null)} className="p-2 rounded-lg" style={{ background: "var(--bg-card)" }}><X className="w-4 h-4" /></button>
               </div>
             </div>
-            <img src={viewSchema.image_url} alt={viewSchema.title} className="w-full rounded-xl" style={{ maxHeight: "70vh", objectFit: "contain", background: "#fff" }} />
+            {safeUrl(viewSchema.image_url) && <img src={safeUrl(viewSchema.image_url)} alt={viewSchema.title} className="w-full rounded-xl" style={{ maxHeight: "70vh", objectFit: "contain", background: "#fff" }} />}
           </div>
         </div>
       )}

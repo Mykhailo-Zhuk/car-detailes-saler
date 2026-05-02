@@ -4,6 +4,18 @@ import { ChatMessage, ChatContent, Part, Schema, ConversationContext } from "@/l
 import { supabase } from "@/lib/supabaseClient";
 import { Send, Loader2, Car, ShoppingCart, X, Plus, Minus, Download, ImageIcon } from "lucide-react";
 
+function safeUrl(url: string | null | undefined): string {
+  if (!url) return "";
+  try {
+    const { protocol } = new URL(url);
+    return protocol === "https:" || protocol === "http:" ? url : "";
+  } catch { return ""; }
+}
+
+function escapeIlike(s: string): string {
+  return s.replace(/[%_\\]/g, c => `\\${c}`);
+}
+
 export default function ChatInterface() {
   const [messages, setMessages] = useState<ChatMessage[]>([{
     id: "welcome",
@@ -21,6 +33,7 @@ export default function ChatInterface() {
   const [context, setContext] = useState<ConversationContext>({});
   const [brands, setBrands] = useState<string[]>([]);
   const messagesEndRef = useRef<HTMLDivElement>(null);
+  const lastSearchRef = useRef(0);
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -49,6 +62,9 @@ export default function ChatInterface() {
   };
 
   const search = async (text: string) => {
+    const now = Date.now();
+    if (now - lastSearchRef.current < 500) return;
+    lastSearchRef.current = now;
     const lower = text.toLowerCase();
 
     // VIN — 17-char alphanumeric
@@ -114,7 +130,7 @@ export default function ChatInterface() {
       const code = codeMatch[1].toUpperCase();
       setThinking("Шукаю запчастину за кодом...");
       const { data: parts } = await supabase
-        .from("parts").select("*,categories(name),cars(brand,model,year)").ilike("code", `%${code}%`).limit(10);
+        .from("parts").select("*,categories(name),cars(brand,model,year)").ilike("code", `%${escapeIlike(code)}%`).limit(10);
       if (parts?.length) {
         setThinking("Шукаю аналоги та схеми...");
         const analogs = parts.length === 1 ? await fetchAnalogs(parts[0].id) : [];
@@ -142,7 +158,7 @@ export default function ChatInterface() {
     const brand = brandList.find(b => lower.includes(b));
     if (brand) {
       setThinking("Шукаю авто в каталозі...");
-      const { data: cars } = await supabase.from("cars").select("*").ilike("brand", brand).limit(50);
+      const { data: cars } = await supabase.from("cars").select("*").ilike("brand", escapeIlike(brand)).limit(50);
       if (cars?.length) {
         const matchedCar = cars.find(c => lower.includes(c.model.toLowerCase()));
         if (matchedCar) {
@@ -183,7 +199,7 @@ export default function ChatInterface() {
     if (context.brand) {
       setThinking("Шукаю в поточному контексті...");
       const { data: cars } = await supabase
-        .from("cars").select("*").ilike("brand", context.brand).ilike("model", `%${text}%`).limit(5);
+        .from("cars").select("*").ilike("brand", escapeIlike(context.brand)).ilike("model", `%${escapeIlike(text)}%`).limit(5);
       if (cars?.length) {
         const car = cars[0];
         const { data: parts } = await supabase
@@ -203,7 +219,7 @@ export default function ChatInterface() {
       setThinking("Шукаю деталі для вашого авто...");
       const { data: parts } = await supabase
         .from("parts").select("*,categories(name)")
-        .eq("car_id", context.carId).ilike("name", `%${text}%`).limit(10);
+        .eq("car_id", context.carId).ilike("name", `%${escapeIlike(text)}%`).limit(10);
       if (parts?.length) {
         setContext(prev => ({ ...prev, lastPartIds: parts.map(p => p.id) }));
         addMsg({
@@ -432,15 +448,17 @@ export default function ChatInterface() {
             <div className="flex items-center justify-between mb-3">
               <h3 className="font-semibold text-white">{schemaView.title}</h3>
               <div className="flex gap-2">
-                <a href={schemaView.image_url} download target="_blank" rel="noopener noreferrer" className="p-2 rounded-lg" style={{ background: "var(--bg-card)" }}>
-                  <Download className="w-4 h-4" />
-                </a>
+                {safeUrl(schemaView.image_url) && (
+                  <a href={safeUrl(schemaView.image_url)} download target="_blank" rel="noopener noreferrer" className="p-2 rounded-lg" style={{ background: "var(--bg-card)" }}>
+                    <Download className="w-4 h-4" />
+                  </a>
+                )}
                 <button onClick={() => setSchemaView(null)} className="p-2 rounded-lg" style={{ background: "var(--bg-card)" }}>
                   <X className="w-4 h-4" />
                 </button>
               </div>
             </div>
-            <img src={schemaView.image_url} alt={schemaView.title} className="w-full rounded-xl" style={{ maxHeight: "70vh", objectFit: "contain", background: "#fff" }} />
+            {safeUrl(schemaView.image_url) && <img src={safeUrl(schemaView.image_url)} alt={schemaView.title} className="w-full rounded-xl" style={{ maxHeight: "70vh", objectFit: "contain", background: "#fff" }} />}
           </div>
         </div>
       )}

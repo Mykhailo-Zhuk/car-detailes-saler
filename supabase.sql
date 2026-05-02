@@ -90,14 +90,14 @@ CREATE POLICY "parts_read" ON parts FOR SELECT USING (true);
 CREATE POLICY "analogs_read" ON analogs FOR SELECT USING (true);
 CREATE POLICY "schemas_read" ON schemas FOR SELECT USING (true);
 
--- Для адмінів
-CREATE POLICY "cars_write" ON cars FOR ALL USING (auth.role() = 'authenticated');
-CREATE POLICY "categories_write" ON categories FOR ALL USING (auth.role() = 'authenticated');
-CREATE POLICY "parts_write" ON parts FOR ALL USING (auth.role() = 'authenticated');
-CREATE POLICY "analogs_write" ON analogs FOR ALL USING (auth.role() = 'authenticated');
-CREATE POLICY "schemas_write" ON schemas FOR ALL USING (auth.role() = 'authenticated');
+-- Тільки адміни (app_metadata.is_admin = true в Supabase Auth)
+CREATE POLICY "cars_write" ON cars FOR ALL USING ((auth.jwt() -> 'app_metadata' ->> 'is_admin')::boolean = true);
+CREATE POLICY "categories_write" ON categories FOR ALL USING ((auth.jwt() -> 'app_metadata' ->> 'is_admin')::boolean = true);
+CREATE POLICY "parts_write" ON parts FOR ALL USING ((auth.jwt() -> 'app_metadata' ->> 'is_admin')::boolean = true);
+CREATE POLICY "analogs_write" ON analogs FOR ALL USING ((auth.jwt() -> 'app_metadata' ->> 'is_admin')::boolean = true);
+CREATE POLICY "schemas_write" ON schemas FOR ALL USING ((auth.jwt() -> 'app_metadata' ->> 'is_admin')::boolean = true);
 
--- Orders - може створювати будь-хто, читати тільки адмін
+-- Orders - може створювати будь-хто, читати/змінювати тільки адмін
 CREATE POLICY "orders_insert" ON orders FOR INSERT WITH CHECK (true);
-CREATE POLICY "orders_select" ON orders FOR SELECT USING (auth.role() = 'authenticated');
-CREATE POLICY "orders_update" ON orders FOR UPDATE USING (auth.role() = 'authenticated');
+CREATE POLICY "orders_select" ON orders FOR SELECT USING ((auth.jwt() -> 'app_metadata' ->> 'is_admin')::boolean = true);
+CREATE POLICY "orders_update" ON orders FOR UPDATE USING ((auth.jwt() -> 'app_metadata' ->> 'is_admin')::boolean = true);
